@@ -1,5 +1,3 @@
-#define FUSE_USE_VERSION 31
-
 #include "gitfs.h"
 #include <fuse3/fuse.h>
 #include <git2.h>
