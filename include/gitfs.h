@@ -8,6 +8,7 @@ struct gitfs_state
 {
     git_repository *repo;
     git_commit *commit;
+    git_remote *remote;
 };
 
 int gitfs_init_repo(struct gitfs_state *st, const char *repo_path,

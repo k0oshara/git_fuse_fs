@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <fuse3/fuse.h>
 #include <git2.h>
+#include <git2/remote.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,11 +10,31 @@
 
 #define GFS ((struct gitfs_state *)fuse_get_context()->private_data)
 
+static int fetch_tree_if_needed(git_tree **out)
+{
+    int err = git_commit_tree(out, GFS->commit);
+    if (err == GIT_ENOTFOUND)
+    {
+        git_remote_fetch(GFS->remote, NULL, NULL, NULL);
+        err = git_commit_tree(out, GFS->commit);
+    }
+    return err;
+}
+
+static int fetch_blob_if_needed(git_blob **out, const git_oid *oid)
+{
+    int err = git_blob_lookup(out, GFS->repo, oid);
+    if (err == GIT_ENOTFOUND)
+    {
+        git_remote_fetch(GFS->remote, NULL, NULL, NULL);
+        err = git_blob_lookup(out, GFS->repo, oid);
+    }
+    return err;
+}
+
 int gitfs_init_repo(struct gitfs_state *st, const char *repo_path,
                     const char *rev)
 {
-    git_libgit2_init();
-
     int error;
     if ((error = git_repository_open(&st->repo, repo_path)))
         return error;
@@ -22,9 +43,17 @@ int gitfs_init_repo(struct gitfs_state *st, const char *repo_path,
     if ((error = git_revparse_single(&obj, st->repo, rev)))
         return error;
 
-    error = git_commit_lookup(&st->commit, st->repo, git_object_id(obj));
+    if ((error = git_commit_lookup(&st->commit, st->repo, git_object_id(obj))))
+    {
+        git_object_free(obj);
+        return error;
+    }
     git_object_free(obj);
-    return error;
+
+    if ((error = git_remote_lookup(&st->remote, st->repo, "origin")))
+        return error;
+
+    return 0;
 }
 
 void *gitfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg)
@@ -39,6 +68,8 @@ void gitfs_destroy(void *private_data)
     struct gitfs_state *st = private_data;
     if (st->commit)
         git_commit_free(st->commit);
+    if (st->remote)
+        git_remote_free(st->remote);
     if (st->repo)
         git_repository_free(st->repo);
     git_libgit2_shutdown();
@@ -58,8 +89,8 @@ int gitfs_getattr(const char *path, struct stat *stbuf,
         return 0;
     }
 
-    git_tree *tree;
-    if (git_commit_tree(&tree, GFS->commit))
+    git_tree *tree = NULL;
+    if (fetch_tree_if_needed(&tree))
         return -ENOENT;
 
     const git_tree_entry *entry = git_tree_entry_byname(tree, path + 1);
@@ -72,11 +103,12 @@ int gitfs_getattr(const char *path, struct stat *stbuf,
     if (git_tree_entry_type(entry) == GIT_OBJECT_BLOB)
     {
         git_blob *blob = NULL;
-        if (git_blob_lookup(&blob, GFS->repo, git_tree_entry_id(entry)))
+        if (fetch_blob_if_needed(&blob, git_tree_entry_id(entry)))
         {
             git_tree_free(tree);
             return -ENOENT;
         }
+
         stbuf->st_mode = S_IFREG | 0444;
         stbuf->st_nlink = 1;
         stbuf->st_size = (off_t)git_blob_rawsize(blob);
@@ -99,12 +131,11 @@ int gitfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     (void)offset;
     (void)fi;
     (void)flags;
-
     if (strcmp(path, "/") != 0)
         return -ENOENT;
 
-    git_tree *tree;
-    if (git_commit_tree(&tree, GFS->commit))
+    git_tree *tree = NULL;
+    if (fetch_tree_if_needed(&tree))
         return -ENOENT;
 
     filler(buf, ".", NULL, 0, 0);
@@ -124,8 +155,9 @@ int gitfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 int gitfs_open(const char *path, struct fuse_file_info *fi)
 {
     (void)fi;
-    git_tree *tree;
-    if (git_commit_tree(&tree, GFS->commit))
+
+    git_tree *tree = NULL;
+    if (fetch_tree_if_needed(&tree))
         return -ENOENT;
 
     const git_tree_entry *entry = git_tree_entry_byname(tree, path + 1);
@@ -133,7 +165,6 @@ int gitfs_open(const char *path, struct fuse_file_info *fi)
 
     if (!entry || git_tree_entry_type(entry) != GIT_OBJECT_BLOB)
         return -ENOENT;
-
     return 0;
 }
 
@@ -141,8 +172,9 @@ int gitfs_read(const char *path, char *buf, size_t size, off_t offset,
                struct fuse_file_info *fi)
 {
     (void)fi;
-    git_tree *tree;
-    if (git_commit_tree(&tree, GFS->commit))
+
+    git_tree *tree = NULL;
+    if (fetch_tree_if_needed(&tree))
         return -ENOENT;
 
     const git_tree_entry *entry = git_tree_entry_byname(tree, path + 1);
@@ -153,7 +185,7 @@ int gitfs_read(const char *path, char *buf, size_t size, off_t offset,
     }
 
     git_blob *blob = NULL;
-    if (git_blob_lookup(&blob, GFS->repo, git_tree_entry_id(entry)))
+    if (fetch_blob_if_needed(&blob, git_tree_entry_id(entry)))
     {
         git_tree_free(tree);
         return -ENOENT;
