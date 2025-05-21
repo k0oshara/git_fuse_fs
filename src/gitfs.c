@@ -1,15 +1,16 @@
 #include "gitfs.h"
+#include <errno.h>
 #include <fuse3/fuse.h>
 #include <git2.h>
 #include <stdio.h>
-#include <string.h>
-#include <errno.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 
 #define GFS ((struct gitfs_state *)fuse_get_context()->private_data)
 
-int gitfs_init_repo(struct gitfs_state *st, const char *repo_path, const char *rev)
+int gitfs_init_repo(struct gitfs_state *st, const char *repo_path,
+                    const char *rev)
 {
     git_libgit2_init();
 
@@ -44,7 +45,8 @@ void gitfs_destroy(void *private_data)
     free(st);
 }
 
-int gitfs_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi)
+int gitfs_getattr(const char *path, struct stat *stbuf,
+                  struct fuse_file_info *fi)
 {
     (void)fi;
     memset(stbuf, 0, sizeof(*stbuf));
@@ -90,8 +92,7 @@ int gitfs_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *f
     return 0;
 }
 
-int gitfs_readdir(const char *path,
-                  void *buf, fuse_fill_dir_t filler,
+int gitfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
                   off_t offset, struct fuse_file_info *fi,
                   enum fuse_readdir_flags flags)
 {
@@ -136,8 +137,8 @@ int gitfs_open(const char *path, struct fuse_file_info *fi)
     return 0;
 }
 
-int gitfs_read(const char *path, char *buf, size_t size,
-               off_t offset, struct fuse_file_info *fi)
+int gitfs_read(const char *path, char *buf, size_t size, off_t offset,
+               struct fuse_file_info *fi)
 {
     (void)fi;
     git_tree *tree;

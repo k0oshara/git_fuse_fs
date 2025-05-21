@@ -1,13 +1,14 @@
-#include <stdio.h>
-#include <stdlib.h>
 #include "gitfs.h"
 #include <fuse3/fuse.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 int main(int argc, char *argv[])
 {
     if (argc < 3)
     {
-        fprintf(stderr, "Usage: %s <repo-path> <mountpoint> [FUSE-opts]\n", argv[0]);
+        fprintf(stderr, "Usage: %s <repo-path> <mountpoint> [FUSE-opts]\n",
+                argv[0]);
         return EXIT_FAILURE;
     }
 

@@ -8,7 +8,7 @@ SRCS   := main.c src/gitfs.c
 OBJS   := $(SRCS:.c=.o)
 TARGET := gitfs
 
-.PHONY: all clean
+.PHONY: all clean lint
 
 all: $(TARGET)
 
@@ -17,6 +17,9 @@ $(TARGET): $(OBJS)
 
 %.o: %.c include/gitfs.h
 	$(CC) $(CFLAGS) -c $< -o $@
+
+lint:
+	find . -name '*.[ch]' -exec clang-format -i --style=file {} +
 
 clean:
 	rm -f $(OBJS) $(TARGET)
