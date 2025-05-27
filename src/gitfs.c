@@ -35,23 +35,23 @@ static int fetch_blob_if_needed(git_blob **out, const git_oid *oid)
 int gitfs_init_repo(struct gitfs_state *st, const char *repo_path,
                     const char *rev)
 {
-    int error;
-    if ((error = git_repository_open(&st->repo, repo_path)))
-        return error;
+    int err;
+    if ((err = git_repository_open(&st->repo, repo_path)))
+        return err;
 
     git_object *obj = NULL;
-    if ((error = git_revparse_single(&obj, st->repo, rev)))
-        return error;
+    if ((err = git_revparse_single(&obj, st->repo, rev)))
+        return err;
 
-    if ((error = git_commit_lookup(&st->commit, st->repo, git_object_id(obj))))
+    if ((err = git_commit_lookup(&st->commit, st->repo, git_object_id(obj))))
     {
         git_object_free(obj);
-        return error;
+        return err;
     }
     git_object_free(obj);
 
-    if ((error = git_remote_lookup(&st->remote, st->repo, "origin")))
-        return error;
+    if ((err = git_remote_lookup(&st->remote, st->repo, "origin")))
+        return err;
 
     return 0;
 }
