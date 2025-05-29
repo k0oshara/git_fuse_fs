@@ -101,7 +101,6 @@ fusermount3 -u ~/my-repo-mount
 ## Сообщество
 
 - **Issues**: [GitHub Issues](https://github.com/username/git_fuse_fs/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/username/git_fuse_fs/discussions)
 - **Pull Requests**: [Contributing Guide](Developer-Guide.md#contributing)
 
 ## Лицензия
