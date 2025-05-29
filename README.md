@@ -1,7 +1,5 @@
 # GitFS - Git Repository FUSE Filesystem
 
-[![CI](https://github.com/username/git_fuse_fs/workflows/CI/badge.svg)](https://github.com/username/git_fuse_fs/actions)
-
 GitFS - это файловая система FUSE, которая позволяет монтировать Git репозитории в режиме только для чтения. Вы можете просматривать содержимое любого коммита как обычную файловую систему.
 
 ## Возможности
