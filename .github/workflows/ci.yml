@@ -1,0 +1,137 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libfuse3-dev \
+          libgit2-dev \
+          pkg-config \
+          clang-format \
+          valgrind \
+          git
+    
+    - name: Download uthash.h
+      run: make include/uthash.h
+    
+    - name: Check code formatting
+      run: |
+        make lint
+        git diff --exit-code || (echo "Code is not formatted. Run 'make lint' to fix." && exit 1)
+    
+    - name: Build
+      run: make all
+    
+    - name: Create test repository
+      run: |
+        mkdir -p test-repo
+        cd test-repo
+        git init
+        git config user.email "test@example.com"
+        git config user.name "Test User"
+        echo "Hello World" > hello.txt
+        mkdir subdir
+        echo "Nested file" > subdir/nested.txt
+        git add .
+        git commit -m "Initial commit"
+    
+    - name: Run tests
+      run: |
+        # Create mount point
+        mkdir -p test-mount
+        
+        # Test basic functionality
+        timeout 30s ./gitfs test-repo test-mount -f &
+        GITFS_PID=$!
+        
+        # Wait for mount
+        sleep 2
+        
+        # Test file access
+        if [ -f test-mount/hello.txt ]; then
+          echo "✓ File exists"
+          cat test-mount/hello.txt
+        else
+          echo "✗ File not found"
+          exit 1
+        fi
+        
+        # Test directory access
+        if [ -d test-mount/subdir ]; then
+          echo "✓ Directory exists"
+          ls -la test-mount/subdir/
+        else
+          echo "✗ Directory not found"
+          exit 1
+        fi
+        
+        # Test nested file
+        if [ -f test-mount/subdir/nested.txt ]; then
+          echo "✓ Nested file exists"
+          cat test-mount/subdir/nested.txt
+        else
+          echo "✗ Nested file not found"
+          exit 1
+        fi
+        
+        # Cleanup
+        kill $GITFS_PID || true
+        fusermount3 -u test-mount || true
+        sleep 1
+    
+    - name: Memory leak check
+      run: |
+        # Create test repository if not exists
+        if [ ! -d test-repo ]; then
+          mkdir -p test-repo
+          cd test-repo
+          git init
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          echo "Hello World" > hello.txt
+          git add .
+          git commit -m "Initial commit"
+          cd ..
+        fi
+        
+        # Run with valgrind (short test)
+        mkdir -p test-mount-valgrind
+        timeout 10s valgrind --leak-check=full --error-exitcode=1 \
+          ./gitfs test-repo test-mount-valgrind -f &
+        VALGRIND_PID=$!
+        
+        sleep 2
+        ls test-mount-valgrind/ || true
+        
+        kill $VALGRIND_PID || true
+        fusermount3 -u test-mount-valgrind || true
+        sleep 1
+
+  build-macos:
+    runs-on: macos-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: |
+        brew install libgit2 macfuse pkg-config clang-format
+    
+    - name: Download uthash.h
+      run: make include/uthash.h
+    
+    - name: Build
+      run: make all
