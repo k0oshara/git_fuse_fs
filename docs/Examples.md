@@ -7,6 +7,8 @@
 ### Монтирование в фоновом режиме
 
 ```bash
+make clean && make
+
 # Монтирование в демон режиме
 ./gitfs /path/to/repo ~/git-mount -o ro,allow_other
 
