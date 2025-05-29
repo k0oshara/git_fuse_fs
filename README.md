@@ -212,7 +212,7 @@ GitFS выводит отладочную информацию в stderr при 
 
 ## Авторы
 
-- Ваше имя - [@username](https://github.com/username)
+- Иванов Максим Сергеевич, Исаенков Александр Дмитриевич - [@k0oshara](https://github.com/k0oshara), [@gugukukua](https://github.com/PlayingPeano?tab=repositories)
 
 ## Благодарности
 

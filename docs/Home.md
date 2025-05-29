@@ -90,7 +90,7 @@ fusermount3 -u ~/my-repo-mount
                               │
                               ▼
                        ┌──────────────┐
-                       │ Git Repository│
+                       │Git Repository│
                        │              │
                        │  .git/       │
                        │  objects/    │
