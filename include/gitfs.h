@@ -6,12 +6,12 @@
 
 struct gitfs_state
 {
-  git_repository* repo;
-  git_commit* commit;
+    git_repository *repo;
+    git_commit *commit;
 };
 
-int
-gitfs_init_repo(struct gitfs_state* st, const char* repo_path, const char* rev);
+int gitfs_init_repo(struct gitfs_state *st, const char *repo_path,
+                    const char *rev);
 
 extern struct fuse_operations gitfs_oper;
 
