@@ -18,11 +18,6 @@ GitFS - это файловая система FUSE, которая позвол
 sudo apt-get install libfuse3-dev libgit2-dev pkg-config
 ```
 
-### macOS
-```bash
-brew install libgit2 macfuse pkg-config
-```
-
 ## Сборка
 
 ```bash
@@ -71,33 +66,6 @@ fusermount3 -u /path/to/mount
 
 # Комбинирование опций
 ./gitfs /path/to/repo /path/to/mount -f -o ro,allow_other,auto_unmount
-```
-
-## Примеры
-
-### Просмотр истории проекта
-
-```bash
-# Создание точки монтирования
-mkdir ~/git-mount
-
-# Монтирование текущего репозитория
-./gitfs . ~/git-mount -f
-
-# В другом терминале
-ls ~/git-mount/
-cat ~/git-mount/src/gitfs.c
-find ~/git-mount -name "*.c" | head -10
-```
-
-### Сравнение версий файлов
-
-```bash
-# Монтирование старой версии
-./gitfs /path/to/repo ~/old-version -f
-
-# В другом терминале
-diff ~/old-version/file.txt /path/to/repo/file.txt
 ```
 
 ## Архитектура
@@ -211,9 +179,3 @@ GitFS выводит отладочную информацию в stderr при 
 ## Авторы
 
 - Иванов Максим Сергеевич, Исаенков Александр Дмитриевич - [@k0oshara](https://github.com/k0oshara), [@gugukukua](https://github.com/PlayingPeano?tab=repositories)
-
-## Благодарности
-
-- Команде FUSE за отличную библиотеку
-- Разработчикам libgit2 за мощный Git API
-- Сообществу открытого ПО за вдохновение
