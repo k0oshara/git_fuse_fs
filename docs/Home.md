@@ -5,11 +5,7 @@
 ## Содержание
 
 - [Быстрый старт](Quick-Start.md)
-- [Установка и сборка](Installation.md)
-- [Руководство пользователя](User-Guide.md)
 - [Руководство разработчика](Developer-Guide.md)
-- [API Reference](API-Reference.md)
-- [Устранение неполадок](Troubleshooting.md)
 - [FAQ](FAQ.md)
 - [Примеры использования](Examples.md)
 
