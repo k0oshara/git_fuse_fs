@@ -1,8 +1,8 @@
 #include "gitfs.h"
+#include "uthash.h"
 #include <errno.h>
 #include <fuse3/fuse.h>
 #include <git2.h>
-#include <git2/remote.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,26 +10,158 @@
 
 #define GFS ((struct gitfs_state *)fuse_get_context()->private_data)
 
-static int fetch_tree_if_needed(git_tree **out)
+struct path_cache_entry
 {
-    int err = git_commit_tree(out, GFS->commit);
-    if (err == GIT_ENOTFOUND)
+    char *path;
+    git_oid oid;
+    git_object_t type;
+    UT_hash_handle hh;
+};
+static struct path_cache_entry *path_cache = NULL;
+
+struct blob_cache_entry
+{
+    char oidhex[GIT_OID_HEXSZ + 1];
+    git_blob *blob;
+    UT_hash_handle hh;
+};
+static struct blob_cache_entry *blob_cache = NULL;
+
+static void free_cache(void)
+{
+    struct path_cache_entry *p, *ptmp;
+    HASH_ITER(hh, path_cache, p, ptmp)
     {
-        git_remote_fetch(GFS->remote, NULL, NULL, NULL);
-        err = git_commit_tree(out, GFS->commit);
+        HASH_DEL(path_cache, p);
+        free(p->path);
+        free(p);
     }
-    return err;
+    struct blob_cache_entry *b, *btmp;
+    HASH_ITER(hh, blob_cache, b, btmp)
+    {
+        HASH_DEL(blob_cache, b);
+        git_blob_free(b->blob);
+        free(b);
+    }
 }
 
-static int fetch_blob_if_needed(git_blob **out, const git_oid *oid)
+static int resolve_oid(const char *path, git_oid *oid_out,
+                       git_object_t *otype_out)
 {
-    int err = git_blob_lookup(out, GFS->repo, oid);
-    if (err == GIT_ENOTFOUND)
+    struct path_cache_entry *pe;
+    HASH_FIND_STR(path_cache, path, pe);
+    if (pe)
     {
-        git_remote_fetch(GFS->remote, NULL, NULL, NULL);
-        err = git_blob_lookup(out, GFS->repo, oid);
+        fprintf(stderr, "[gitfs] path cache hit: %s → %s\n", path,
+                git_object_type2string(pe->type));
+        *oid_out = pe->oid;
+        *otype_out = pe->type;
+        return 0;
     }
-    return err;
+
+    fprintf(stderr, "[gitfs] resolve_oid MISS: path=\"%s\"\n", path);
+    git_tree *tree = NULL;
+    int err = git_commit_tree(&tree, GFS->commit);
+    if (err)
+        return err;
+
+    git_oid oid;
+    git_object_t otype;
+
+    if (strcmp(path, "/") == 0)
+    {
+        oid = *git_tree_id(tree);
+        otype = GIT_OBJECT_TREE;
+    }
+    else
+    {
+        char *p = strdup(path + 1);
+        char *seg = strtok(p, "/");
+        git_tree *cur = tree;
+        while (seg)
+        {
+            const git_tree_entry *e = git_tree_entry_byname(cur, seg);
+            if (!e)
+            {
+                err = GIT_ENOTFOUND;
+                break;
+            }
+            otype = git_tree_entry_type(e);
+            oid = *git_tree_entry_id(e);
+
+            char hex[GIT_OID_HEXSZ + 1];
+            git_oid_tostr(hex, sizeof(hex), &oid);
+            fprintf(stderr, "[gitfs]   segment=\"%s\" type=%s oid=%s\n", seg,
+                    otype == GIT_OBJECT_TREE ? "tree" : "blob", hex);
+
+            seg = strtok(NULL, "/");
+            if (otype == GIT_OBJECT_TREE && seg)
+            {
+                git_tree *next = NULL;
+                err = git_tree_lookup(&next, GFS->repo, &oid);
+                git_tree_free(cur);
+                if (err)
+                    break;
+                cur = next;
+            }
+            else
+            {
+                git_tree_free(cur);
+                break;
+            }
+        }
+        free(p);
+    }
+    git_tree_free(tree);
+    if (err)
+        return err;
+
+    pe = malloc(sizeof(*pe));
+    pe->path = strdup(path);
+    pe->oid = oid;
+    pe->type = otype;
+    HASH_ADD_KEYPTR(hh, path_cache, pe->path, strlen(pe->path), pe);
+
+    *oid_out = oid;
+    *otype_out = otype;
+    return 0;
+}
+
+static int load_tree(git_tree **out, const git_oid *oid)
+{
+    char hex[GIT_OID_HEXSZ + 1];
+    git_oid_tostr(hex, sizeof(hex), oid);
+    fprintf(stderr, "[gitfs] load_tree: oid=%s\n", hex);
+    return git_tree_lookup(out, GFS->repo, oid);
+}
+
+static int load_blob(git_blob **out, const git_oid *oid)
+{
+    char hex[GIT_OID_HEXSZ + 1];
+    git_oid_tostr(hex, sizeof(hex), oid);
+
+    struct blob_cache_entry *be;
+    HASH_FIND_STR(blob_cache, hex, be);
+    if (be)
+    {
+        fprintf(stderr, "[gitfs] cache hit: blob %s\n", hex);
+        *out = be->blob;
+        return 0;
+    }
+
+    fprintf(stderr, "[gitfs] load_blob: oid=%s\n", hex);
+    git_blob *blob = NULL;
+    int err = git_blob_lookup(&blob, GFS->repo, oid);
+    if (err)
+        return err;
+
+    be = malloc(sizeof(*be));
+    strcpy(be->oidhex, hex);
+    be->blob = blob;
+    HASH_ADD_STR(blob_cache, oidhex, be);
+
+    *out = blob;
+    return 0;
 }
 
 int gitfs_init_repo(struct gitfs_state *st, const char *repo_path,
@@ -38,21 +170,15 @@ int gitfs_init_repo(struct gitfs_state *st, const char *repo_path,
     int err;
     if ((err = git_repository_open(&st->repo, repo_path)))
         return err;
-
-    git_object *obj = NULL;
-    if ((err = git_revparse_single(&obj, st->repo, rev)))
+    git_object *o = NULL;
+    if ((err = git_revparse_single(&o, st->repo, rev)))
         return err;
-
-    if ((err = git_commit_lookup(&st->commit, st->repo, git_object_id(obj))))
+    if ((err = git_commit_lookup(&st->commit, st->repo, git_object_id(o))))
     {
-        git_object_free(obj);
+        git_object_free(o);
         return err;
     }
-    git_object_free(obj);
-
-    if ((err = git_remote_lookup(&st->remote, st->repo, "origin")))
-        return err;
-
+    git_object_free(o);
     return 0;
 }
 
@@ -65,11 +191,10 @@ void *gitfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg)
 
 void gitfs_destroy(void *private_data)
 {
+    free_cache();
     struct gitfs_state *st = private_data;
     if (st->commit)
         git_commit_free(st->commit);
-    if (st->remote)
-        git_remote_free(st->remote);
     if (st->repo)
         git_repository_free(st->repo);
     git_libgit2_shutdown();
@@ -82,45 +207,25 @@ int gitfs_getattr(const char *path, struct stat *stbuf,
     (void)fi;
     memset(stbuf, 0, sizeof(*stbuf));
 
-    if (strcmp(path, "/") == 0)
+    git_oid oid;
+    git_object_t type;
+    if (resolve_oid(path, &oid, &type) != 0)
+        return -ENOENT;
+
+    if (type == GIT_OBJECT_TREE)
     {
-        stbuf->st_mode = S_IFDIR | 0755;
+        stbuf->st_mode = S_IFDIR | 0555;
         stbuf->st_nlink = 2;
-        return 0;
-    }
-
-    git_tree *tree = NULL;
-    if (fetch_tree_if_needed(&tree))
-        return -ENOENT;
-
-    const git_tree_entry *entry = git_tree_entry_byname(tree, path + 1);
-    if (!entry)
-    {
-        git_tree_free(tree);
-        return -ENOENT;
-    }
-
-    if (git_tree_entry_type(entry) == GIT_OBJECT_BLOB)
-    {
-        git_blob *blob = NULL;
-        if (fetch_blob_if_needed(&blob, git_tree_entry_id(entry)))
-        {
-            git_tree_free(tree);
-            return -ENOENT;
-        }
-
-        stbuf->st_mode = S_IFREG | 0444;
-        stbuf->st_nlink = 1;
-        stbuf->st_size = (off_t)git_blob_rawsize(blob);
-        git_blob_free(blob);
     }
     else
     {
-        stbuf->st_mode = S_IFDIR | 0755;
-        stbuf->st_nlink = 2;
+        git_blob *b = NULL;
+        if (load_blob(&b, &oid) != 0)
+            return -ENOENT;
+        stbuf->st_mode = S_IFREG | 0444;
+        stbuf->st_nlink = 1;
+        stbuf->st_size = (off_t)git_blob_rawsize(b);
     }
-
-    git_tree_free(tree);
     return 0;
 }
 
@@ -131,23 +236,24 @@ int gitfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     (void)offset;
     (void)fi;
     (void)flags;
-    if (strcmp(path, "/") != 0)
+
+    git_oid oid;
+    git_object_t type;
+    if (resolve_oid(path, &oid, &type) != 0 || type != GIT_OBJECT_TREE)
         return -ENOENT;
 
     git_tree *tree = NULL;
-    if (fetch_tree_if_needed(&tree))
+    if (load_tree(&tree, &oid) != 0)
         return -ENOENT;
 
     filler(buf, ".", NULL, 0, 0);
     filler(buf, "..", NULL, 0, 0);
-
-    size_t count = git_tree_entrycount(tree);
-    for (size_t i = 0; i < count; i++)
+    size_t cnt = git_tree_entrycount(tree);
+    for (size_t i = 0; i < cnt; i++)
     {
         const git_tree_entry *e = git_tree_entry_byindex(tree, i);
         filler(buf, git_tree_entry_name(e), NULL, 0, 0);
     }
-
     git_tree_free(tree);
     return 0;
 }
@@ -155,15 +261,9 @@ int gitfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 int gitfs_open(const char *path, struct fuse_file_info *fi)
 {
     (void)fi;
-
-    git_tree *tree = NULL;
-    if (fetch_tree_if_needed(&tree))
-        return -ENOENT;
-
-    const git_tree_entry *entry = git_tree_entry_byname(tree, path + 1);
-    git_tree_free(tree);
-
-    if (!entry || git_tree_entry_type(entry) != GIT_OBJECT_BLOB)
+    git_oid oid;
+    git_object_t type;
+    if (resolve_oid(path, &oid, &type) != 0 || type != GIT_OBJECT_BLOB)
         return -ENOENT;
     return 0;
 }
@@ -172,30 +272,18 @@ int gitfs_read(const char *path, char *buf, size_t size, off_t offset,
                struct fuse_file_info *fi)
 {
     (void)fi;
-
-    git_tree *tree = NULL;
-    if (fetch_tree_if_needed(&tree))
+    git_oid oid;
+    git_object_t type;
+    if (resolve_oid(path, &oid, &type) != 0 || type != GIT_OBJECT_BLOB)
         return -ENOENT;
 
-    const git_tree_entry *entry = git_tree_entry_byname(tree, path + 1);
-    if (!entry)
-    {
-        git_tree_free(tree);
+    git_blob *b = NULL;
+    if (load_blob(&b, &oid) != 0)
         return -ENOENT;
-    }
 
-    git_blob *blob = NULL;
-    if (fetch_blob_if_needed(&blob, git_tree_entry_id(entry)))
-    {
-        git_tree_free(tree);
-        return -ENOENT;
-    }
-    git_tree_free(tree);
-
-    const void *data = git_blob_rawcontent(blob);
-    size_t blob_size = git_blob_rawsize(blob);
+    const void *data = git_blob_rawcontent(b);
+    size_t blob_size = git_blob_rawsize(b);
     size_t to_copy = 0;
-
     if ((size_t)offset < blob_size)
     {
         to_copy = blob_size - offset;
@@ -203,8 +291,6 @@ int gitfs_read(const char *path, char *buf, size_t size, off_t offset,
             to_copy = size;
         memcpy(buf, (char *)data + offset, to_copy);
     }
-
-    git_blob_free(blob);
     return (int)to_copy;
 }
 
