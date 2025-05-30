@@ -1,8 +1,5 @@
 #!/bin/bash
 
-# GitFS Test Runner Script
-# Автоматизированный запуск тестов для GitFS
-
 set -e
 
 # Цвета для вывода
